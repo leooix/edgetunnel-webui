@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -20475,7 +20475,10 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
             // 添加或更新 Popup
             const isDark = document.documentElement.classList.contains('dark-mode');
             const textColor = isDark ? '#ffffff' : '#333333';
-            const popupContent = `
+            
+            const targetIp = proxyData.clientIp || proxyData.ip;
+
+            const getBasePopupContent = (extraHtml = '<div class="ip-detail-popup-item" style="margin-top: 4px; border-top: 1px dashed #ccc; padding-top: 4px;"><span class="ip-detail-popup-label" style="color:#aaa;">查询扩展信息中...</span></div>') => `
                 <div class="ip-detail-popup-city">
                     ${proxyData.city || proxyData.country || '位置'}
                 </div>
@@ -20485,7 +20488,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
                 </div>
                 <div class="ip-detail-popup-item">
                     <span class="ip-detail-popup-label">落地IP:</span>
-                    <span class="ip-detail-popup-value">${proxyData.clientIp || proxyData.ip || '-'}</span>
+                    <span class="ip-detail-popup-value">${targetIp || '-'}</span>
                 </div>
                 <div class="ip-detail-popup-item">
                     <span class="ip-detail-popup-label">ASN:</span>
@@ -20495,8 +20498,115 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
                     <span class="ip-detail-popup-label">运营商:</span>
                     <span class="ip-detail-popup-value">${proxyData.asOrganization || '未知'}</span>
                 </div>
+                ${extraHtml}
             `;
-            proxyMaps[type].marker.bindPopup(popupContent, { offset: L.point(0, -32) }).openPopup();
+
+            proxyMaps[type].marker.bindPopup(getBasePopupContent(), { offset: L.point(0, -32) }).openPopup();
+
+            // 仅在获取到目标 IP 时发起查询
+            if (targetIp) {
+                const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent('https://ip.net.coffee/api/ip/lookup/' + targetIp);
+                fetch(proxyUrl).then(res => {
+                    if (!res.ok) throw new Error('Network response was not ok');
+                    return res.json();
+                }).then(data => {
+                    // 1. 标记
+                    let markText = "未知";
+                    if (data.isResidential) markText = "家庭住宅IP";
+                    else if (data.is_datacenter) markText = "机房IP";
+                    else if (data.is_mobile) markText = "移动网络";
+                    
+                    if (data.is_proxy) markText += " (Proxy)";
+                    if (data.is_vpn) markText += " (VPN)";
+
+                    // 2. IP 评分
+                    const ipScore = data.trust_score !== undefined ? data.trust_score : "未知";
+
+                    // 3. 滥用等级 (完美还原官方根据分数判断的逻辑)
+                    let abuseText = "未知";
+                    if (data.intelligence) {
+                        const rawStr = data.intelligence.abuser_level || "";
+                        const scoreRaw = String(data.intelligence.abuser_score_raw || "");
+                        let matched = false;
+                        
+                        const m = scoreRaw.match(/^\s*([0-9]*\.?[0-9]+)/);
+                        const scoreVal = m ? parseFloat(m[1]) : null;
+                        
+                        if (scoreVal !== null && isFinite(scoreVal)) {
+                            matched = true;
+                            if (scoreVal > 0.25) abuseText = "极高风险";
+                            else if (scoreVal > 0.05) abuseText = "高风险";
+                            else if (scoreVal > 0.025) abuseText = "中风险";
+                            else if (scoreVal > 0.01) abuseText = "低风险";
+                            else if (scoreVal > 0.003) abuseText = "纯净";
+                            else abuseText = "极度纯净";
+                        } else {
+                            const v = rawStr.toLowerCase();
+                            if (v === "very_high" || v === "veryhigh") { abuseText = "极高风险"; matched = true; }
+                            else if (v === "high") { abuseText = "高风险"; matched = true; }
+                            else if (v === "elevated") { abuseText = "中风险"; matched = true; }
+                            else if (v === "low") { abuseText = "纯净"; matched = true; }
+                        }
+                        
+                        if (!matched && rawStr) {
+                            abuseText = String(rawStr); // 未知字段，直接输出原始字符
+                        }
+                    }
+
+                    // 4. 风险标记
+                    let riskMark = "未发现明显威胁";
+                    if (data.intelligence && data.intelligence.threats && data.intelligence.threats.length > 0) {
+                        riskMark = data.intelligence.threats.map(t => t.label).join(", ");
+                    }
+
+                    // 5. VPN 标记
+                    let vpnText = "未知";
+                    if (data.is_vpn === true) vpnText = "已检测到";
+                    else if (data.is_vpn === false) vpnText = "未检测到";
+
+                    // 6. 代理 (Proxy) 标记
+                    let proxyCheckText = "未知";
+                    if (data.is_proxy === true) proxyCheckText = "已检测到";
+                    else if (data.is_proxy === false) proxyCheckText = "未检测到";
+
+                    const extraHtml = \`
+                        <div class="ip-detail-popup-item" style="margin-top: 4px; border-top: 1px dashed #ccc; padding-top: 4px;">
+                            <span class="ip-detail-popup-label">标记:</span>
+                            <span class="ip-detail-popup-value">\${markText}</span>
+                        </div>
+                        <div class="ip-detail-popup-item">
+                            <span class="ip-detail-popup-label">IP 评分:</span>
+                            <span class="ip-detail-popup-value">\${ipScore}</span>
+                        </div>
+                        <div class="ip-detail-popup-item">
+                            <span class="ip-detail-popup-label">风险标记:</span>
+                            <span class="ip-detail-popup-value">\${riskMark}</span>
+                        </div>
+                        <div class="ip-detail-popup-item">
+                            <span class="ip-detail-popup-label">滥用等级:</span>
+                            <span class="ip-detail-popup-value">\${abuseText}</span>
+                        </div>
+                        <div class="ip-detail-popup-item">
+                            <span class="ip-detail-popup-label">VPN:</span>
+                            <span class="ip-detail-popup-value">\${vpnText}</span>
+                        </div>
+                        <div class="ip-detail-popup-item">
+                            <span class="ip-detail-popup-label">代理 (Proxy):</span>
+                            <span class="ip-detail-popup-value">\${proxyCheckText}</span>
+                        </div>
+                    \`;
+
+                    // 确保选中没变，避免气泡内容错乱
+                    if (lastMappedProxy[type] === selectedProxyUrl) {
+                        proxyMaps[type].marker.setPopupContent(getBasePopupContent(extraHtml));
+                    }
+                }).catch(err => {
+                    console.error("Failed to fetch extended IP info:", err);
+                    if (lastMappedProxy[type] === selectedProxyUrl) {
+                        proxyMaps[type].marker.setPopupContent(getBasePopupContent('<div class="ip-detail-popup-item" style="margin-top: 4px; border-top: 1px dashed #ccc; padding-top: 4px;"><span class="ip-detail-popup-label" style="color:#d32f2f;">获取扩展信息失败</span></div>'));
+                    }
+                });
+            }
         }
 
         function closeExploreProxyModal(type, event) {
