@@ -20569,32 +20569,32 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
                     if (data.is_proxy === true) proxyCheckText = "已检测到";
                     else if (data.is_proxy === false) proxyCheckText = "未检测到";
 
-                    const extraHtml = \`
+                    const extraHtml = `
                         <div class="ip-detail-popup-item" style="margin-top: 4px; border-top: 1px dashed #ccc; padding-top: 4px;">
                             <span class="ip-detail-popup-label">标记:</span>
-                            <span class="ip-detail-popup-value">\${markText}</span>
+                            <span class="ip-detail-popup-value">${markText}</span>
                         </div>
                         <div class="ip-detail-popup-item">
                             <span class="ip-detail-popup-label">IP 评分:</span>
-                            <span class="ip-detail-popup-value">\${ipScore}</span>
+                            <span class="ip-detail-popup-value">${ipScore}</span>
                         </div>
                         <div class="ip-detail-popup-item">
                             <span class="ip-detail-popup-label">风险标记:</span>
-                            <span class="ip-detail-popup-value">\${riskMark}</span>
+                            <span class="ip-detail-popup-value">${riskMark}</span>
                         </div>
                         <div class="ip-detail-popup-item">
                             <span class="ip-detail-popup-label">滥用等级:</span>
-                            <span class="ip-detail-popup-value">\${abuseText}</span>
+                            <span class="ip-detail-popup-value">${abuseText}</span>
                         </div>
                         <div class="ip-detail-popup-item">
                             <span class="ip-detail-popup-label">VPN:</span>
-                            <span class="ip-detail-popup-value">\${vpnText}</span>
+                            <span class="ip-detail-popup-value">${vpnText}</span>
                         </div>
                         <div class="ip-detail-popup-item">
                             <span class="ip-detail-popup-label">代理 (Proxy):</span>
-                            <span class="ip-detail-popup-value">\${proxyCheckText}</span>
+                            <span class="ip-detail-popup-value">${proxyCheckText}</span>
                         </div>
-                    \`;
+                    `;
 
                     // 确保选中没变，避免气泡内容错乱
                     if (lastMappedProxy[type] === selectedProxyUrl) {
