@@ -20145,6 +20145,84 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
         let proxyIPVerificationTimeouts = {};
         let selectedProxyIPs = []; // 存储用户选择的 ProxyIP
 
+        // ==================== 分数查分与缓存系统 ====================
+        let ipScoreCache = {};
+        try {
+            ipScoreCache = JSON.parse(localStorage.getItem('ipScoreCache') || '{}');
+            const now = Date.now();
+            let changed = false;
+            for (let ip in ipScoreCache) {
+                if (now - ipScoreCache[ip].time > 86400000) { // 24小时过期
+                    delete ipScoreCache[ip];
+                    changed = true;
+                }
+            }
+            if (changed) localStorage.setItem('ipScoreCache', JSON.stringify(ipScoreCache));
+        } catch (e) { ipScoreCache = {}; }
+
+        let scoreQueue = [];
+        let isProcessingScoreQueue = false;
+
+        async function processScoreQueue() {
+            if (isProcessingScoreQueue) return;
+            isProcessingScoreQueue = true;
+            let processedAny = false;
+
+            while (scoreQueue.length > 0) {
+                const proxyIp = scoreQueue.shift();
+                if (ipScoreCache[proxyIp]) {
+                    updateOptionText(proxyIp);
+                    continue;
+                }
+
+                try {
+                    const proxyUrl = '/ipcoffee/' + proxyIp;
+                    const res = await fetch(proxyUrl);
+                    if (res.ok) {
+                        const data = await res.json();
+                        let scoreVal = data.trust_score !== undefined ? Number(data.trust_score) : -1;
+                        ipScoreCache[proxyIp] = { score: scoreVal, time: Date.now() };
+                        localStorage.setItem('ipScoreCache', JSON.stringify(ipScoreCache));
+                    } else {
+                        ipScoreCache[proxyIp] = { score: -1, time: Date.now() };
+                    }
+                    updateOptionText(proxyIp);
+                } catch (e) {
+                    console.error("Score fetch error:", e);
+                    ipScoreCache[proxyIp] = { score: -1, time: Date.now() };
+                }
+
+                processedAny = true;
+                await new Promise(r => setTimeout(r, 500)); // 强制延迟500ms防止被禁
+            }
+
+            isProcessingScoreQueue = false;
+            if (processedAny) {
+                // 全部查完后触发最终排序
+                const regionSelect = document.getElementById(proxyConfigs['proxyip'].regionSelectId);
+                if (regionSelect && regionSelect.value) {
+                    onProxyRegionChange('proxyip');
+                }
+            }
+        }
+
+        function updateOptionText(proxyIp) {
+            const select = document.getElementById(proxyConfigs['proxyip'].proxySelectId);
+            if (!select) return;
+            for (let i = 0; i < select.options.length; i++) {
+                const opt = select.options[i];
+                if (opt.value && opt.value.startsWith(proxyIp + ":")) {
+                    const cached = ipScoreCache[proxyIp];
+                    if (cached && cached.score >= 0) {
+                        opt.text = opt.text.replace(/^\[⏳\]/, `[${cached.score}]`);
+                    } else {
+                        opt.text = opt.text.replace(/^\[⏳\]/, `[无]`);
+                    }
+                }
+            }
+        }
+
+
         function showExploreSocks5Modal() {
             showExploreProxyModal('socks5');
         }
@@ -20223,11 +20301,15 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
                 return status && status.status !== 'pending';
             });
 
-            // 辅助函数：判断节点是否符合“高优先级”条件（延迟<=10ms，且对于ProxyIP模式需支持IPv4）
+            // 辅助函数：判断节点是否符合“高优先级”条件（延迟<=5ms，且对于ProxyIP模式需支持IPv4）
             function isHighPriority(status) {
                 if (!status || status.status !== 'success') return false;
-                if (status.responseTime > 10) return false;
-                if (type === 'proxyip' && status.supports_ipv4 !== true) return false;
+                if (type === 'proxyip') {
+                    if (status.responseTime > 5) return false;
+                    if (status.supports_ipv4 !== true) return false;
+                } else {
+                    if (status.responseTime > 10) return false;
+                }
                 return true;
             }
 
@@ -20243,8 +20325,15 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
                 if (highPriorityA && !highPriorityB) return -1;
                 if (!highPriorityA && highPriorityB) return 1;
 
-                // 2. 都在高优先级内，按延迟排序
+                // 2. 都在高优先级内，针对 ProxyIP 模式优先按缓存的分数倒序排列
                 if (highPriorityA && highPriorityB) {
+                    if (type === 'proxyip') {
+                        const scoreA = (ipScoreCache[a.ip] && ipScoreCache[a.ip].score >= 0) ? ipScoreCache[a.ip].score : -1;
+                        const scoreB = (ipScoreCache[b.ip] && ipScoreCache[b.ip].score >= 0) ? ipScoreCache[b.ip].score : -1;
+                        if (scoreA !== scoreB) {
+                            return scoreB - scoreA; // 分数高的靠前
+                        }
+                    }
                     return (statusA.responseTime || 0) - (statusB.responseTime || 0);
                 }
 
@@ -20302,9 +20391,28 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
 
                 // 只有符合 isHighPriority 条件的节点才可选 (不置灰)
                 const disabled = !isSelectable || !isHighPriority(status);
+                
+                // ProxyIP 分数显示处理
+                let finalLabel = label;
+                if (type === 'proxyip' && isHighPriority(status)) {
+                    if (ipScoreCache[proxy.ip]) {
+                        const score = ipScoreCache[proxy.ip].score;
+                        finalLabel = (score >= 0 ? `[${score}] ` : `[无] `) + finalLabel;
+                    } else {
+                        finalLabel = `[⏳] ` + finalLabel;
+                        if (!scoreQueue.includes(proxy.ip)) {
+                            scoreQueue.push(proxy.ip);
+                        }
+                    }
+                }
+
                 // ProxyIP 不需要默认选中，因为是多选触发
                 const selected = type !== 'proxyip' && isSelectable && isHighPriority(status) && successfulProxies.indexOf(proxy) === 0 ? 'selected' : '';
-                return `<option value="${proxy.proxy}" ${disabled ? 'disabled' : ''} ${selected}>${label}</option>`;
+                return `<option value="${proxy.proxy}" ${disabled ? 'disabled' : ''} ${selected}>${finalLabel}</option>`;
+            }
+
+            if (type === 'proxyip' && scoreQueue.length > 0) {
+                setTimeout(processScoreQueue, 100);
             }
 
             let html = type === 'proxyip' ? '<option value="">-- 请选择代理 --</option>' : '';
