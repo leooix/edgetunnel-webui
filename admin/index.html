@@ -20505,7 +20505,8 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
 
             // 仅在获取到目标 IP 时发起查询
             if (targetIp) {
-                const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent('https://ip.net.coffee/api/ip/lookup/' + targetIp);
+                // 改用 CF Worker 自身作为代理，解决 corsproxy.io 在生产环境被拦截的问题
+                const proxyUrl = '/ipcoffee/' + targetIp;
                 fetch(proxyUrl).then(res => {
                     if (!res.ok) throw new Error('Network response was not ok');
                     return res.json();
