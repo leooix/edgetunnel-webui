@@ -9083,7 +9083,7 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
 
                 <div class="form-group">
                     <label for="optimizeConcurrency">测试线程数：</label>
-                    <input type="number" id="optimizeConcurrency" min="1" max="32" value="8"
+                    <input type="number" id="optimizeConcurrency" min="1" max="32" value="32"
                         class="optimize-concurrency-input" placeholder="1-32" oninput="validateConcurrency(this)"
                         onchange="validateConcurrency(this)">
                 </div>
@@ -9949,6 +9949,14 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
                                 style="padding-left: 16px;">
                                 <option value="">加载中...</option>
                             </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="proxyIPDelayInput">⏱️ 延时 (0-200]ms</label>
+                        <div class="input-wrapper">
+                            <input type="number" id="proxyIPDelayInput" value="5" min="1" max="200" onchange="updateProxyDisplay('proxyip')"
+                                style="padding-left: 16px;">
                         </div>
                     </div>
 
@@ -19906,10 +19914,12 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
         }
 
         function closeGetMoreProxyIPModal(event) {
+            scoreQueue = []; // 清空后台查分队列，避免浪费资源
             closeExploreProxyModal('proxyip', event);
         }
 
         function onProxyIPDataRegionChange() {
+            scoreQueue = []; // 切换地区时清空查分队列
             onProxyRegionChange('proxyip');
         }
 
@@ -20162,11 +20172,13 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
 
         let scoreQueue = [];
         let isProcessingScoreQueue = false;
+        let scoreQueryCount = 0;
 
         async function processScoreQueue() {
             if (isProcessingScoreQueue) return;
             isProcessingScoreQueue = true;
             let processedAny = false;
+            scoreQueryCount = 0; // 每次开始处理队列时重置计数
 
             while (scoreQueue.length > 0) {
                 const proxyIp = scoreQueue.shift();
@@ -20193,7 +20205,21 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
                 }
 
                 processedAny = true;
-                await new Promise(r => setTimeout(r, 500)); // 强制延迟500ms防止被禁
+                scoreQueryCount++;
+                
+                // IP评分查询限流保护
+                let delayMs = 1000;
+                if (scoreQueryCount <= 20) {
+                    delayMs = 500;
+                } else if (scoreQueryCount < 40) {
+                    delayMs = 100;
+                } else if (scoreQueryCount === 40) {
+                    delayMs = 10000; // 查询满40个后强制停止10s再查询
+                } else {
+                    delayMs = 1000; // 之后所有的ip都延时1s
+                }
+                
+                await new Promise(r => setTimeout(r, delayMs));
             }
 
             isProcessingScoreQueue = false;
@@ -20301,11 +20327,12 @@ vless://7b102311-43fd-4e8f-977e-8090623c101d@edt-pages.github.io:443?security=tl
                 return status && status.status !== 'pending';
             });
 
-            // 辅助函数：判断节点是否符合“高优先级”条件（延迟<=5ms，且对于ProxyIP模式需支持IPv4）
+            // 辅助函数：判断节点是否符合“高优先级”条件
             function isHighPriority(status) {
                 if (!status || status.status !== 'success') return false;
                 if (type === 'proxyip') {
-                    if (status.responseTime > 5) return false;
+                    const delayLimit = parseInt(document.getElementById('proxyIPDelayInput')?.value) || 5;
+                    if (status.responseTime > delayLimit) return false;
                     if (status.supports_ipv4 !== true) return false;
                 } else {
                     if (status.responseTime > 10) return false;
